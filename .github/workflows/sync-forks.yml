@@ -1,4 +1,4 @@
-name: Sync forks automatically + conditional HF rebuild
+name: Sync forks automatically + conditional HF rebuild + Koyeb redeploy
 
 on:
   schedule:
@@ -54,7 +54,7 @@ jobs:
   rebuild-spaces:
     needs: sync
     runs-on: ubuntu-latest
-    if: needs.sync.outputs.updated == 'true'  # parte solo se ci sono aggiornamenti
+    if: needs.sync.outputs.updated == 'true'
 
     steps:
       - name: Rebuild HuggingFace Space (Erdbluca)
@@ -90,3 +90,24 @@ jobs:
             echo "Retrying in 10s..."
             sleep 10
           done
+
+  redeploy-koyeb:
+    needs: rebuild-spaces
+    runs-on: ubuntu-latest
+    if: needs.sync.outputs.updated == 'true'
+    steps:
+      - name: Redeploy EasyProxy on Koyeb
+        run: |
+          echo "Triggering Koyeb redeploy for EasyProxy..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.KOYEB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            https://api.koyeb.com/v1/apps/nice-tanya-lucapora90-f21273aa/deployments \
+            -d '{"branch":"main"}')
+          echo "HTTP status: $response"
+          if [ "$response" -ne 201 ]; then
+            echo "Koyeb redeploy failed!"
+            exit 1
+          fi
+          echo "Koyeb redeploy triggered successfully!"
