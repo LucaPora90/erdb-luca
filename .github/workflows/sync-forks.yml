@@ -1,4 +1,4 @@
-name: Sync forks automatically + robust HF rebuild
+name: Sync forks automatically + conditional HF rebuild
 
 on:
   schedule:
@@ -9,6 +9,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         include:
@@ -16,13 +17,15 @@ jobs:
             branch: main
           - repo: LucaPora90/erdb-luca
             branch: main
+
     outputs:
       updated: ${{ steps.check_update.outputs.updated }}
+
     steps:
       - name: Sync fork
         id: check_update
         run: |
-          echo "Syncing ${{ matrix.repo }}..."
+          echo "Syncing ${{ matrix.repo }}"
           
           response=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST \
@@ -51,52 +54,39 @@ jobs:
   rebuild-spaces:
     needs: sync
     runs-on: ubuntu-latest
-    if: needs.sync.outputs.updated == 'true'
+    if: needs.sync.outputs.updated == 'true'  # parte solo se ci sono aggiornamenti
+
     steps:
       - name: Rebuild HuggingFace Space (Erdbluca)
         run: |
-          echo "Starting rebuild for Erdbluca..."
-          delay=5
-          for i in 1 5; do
-            echo "Attempt $i..."
-            status=$(curl -s -o /dev/null -w "%{http_code}" \
+          for i in 1 2 3; do
+            echo "Attempt $i: Rebuilding Erdbluca"
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST \
               -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
               https://huggingface.co/api/spaces/wrangler90/Erdbluca/restart)
-            echo "HTTP status: $status"
-            if [ "$status" -eq 200 ]; then
-              echo "Erdbluca rebuilt successfully!"
+            echo "HTTP status: $response"
+            if [ "$response" -eq 200 ]; then
+              echo "Erdbluca rebuilt successfully"
               break
             fi
-            echo "Retrying in $delay seconds..."
-            sleep $delay
-            delay=$((delay * 2))
-            if [ $i -eq 5 ]; then
-              echo "Erdbluca rebuild failed after 5 attempts!"
-              exit 1
-            fi
+            echo "Retrying in 10s..."
+            sleep 10
           done
 
       - name: Rebuild HuggingFace Space (EasyProxy)
         run: |
-          echo "Starting rebuild for EasyProxy..."
-          delay=5
-          for i in 1 5; do
-            echo "Attempt $i..."
-            status=$(curl -s -o /dev/null -w "%{http_code}" \
+          for i in 1 2 3; do
+            echo "Attempt $i: Rebuilding EasyProxy"
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST \
               -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
               https://huggingface.co/api/spaces/wrangler90/EasyProxy/restart)
-            echo "HTTP status: $status"
-            if [ "$status" -eq 200 ]; then
-              echo "EasyProxy rebuilt successfully!"
+            echo "HTTP status: $response"
+            if [ "$response" -eq 200 ]; then
+              echo "EasyProxy rebuilt successfully"
               break
             fi
-            echo "Retrying in $delay seconds..."
-            sleep $delay
-            delay=$((delay * 2))
-            if [ $i -eq 5 ]; then
-              echo "EasyProxy rebuild failed after 5 attempts!"
-              exit 1
-            fi
+            echo "Retrying in 10s..."
+            sleep 10
           done
