@@ -92,11 +92,28 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.sync.outputs.updated == 'true'
     steps:
+      - name: Check DNS for Koyeb API
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i: Checking DNS for api.koyeb.com..."
+            nslookup api.koyeb.com
+            if [ $? -eq 0 ]; then
+              echo "DNS resolved successfully!"
+              break
+            fi
+            echo "DNS resolution failed, retrying in 10s..."
+            sleep 10
+            if [ $i -eq 3 ]; then
+              echo "DNS resolution failed after 3 attempts!"
+              exit 1
+            fi
+          done
+
       - name: Redeploy EasyProxy on Koyeb
         run: |
           echo "Triggering Koyeb redeploy for EasyProxy..."
           for i in 1 2 3; do
-            response=$(curl -v -s -o /dev/null -w "%{http_code}" \
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST \
               -H "Authorization: Bearer ${{ secrets.KOYEB_TOKEN }}" \
               -H "Content-Type: application/json" \
@@ -107,9 +124,9 @@ jobs:
               echo "Koyeb redeploy triggered successfully!"
               break
             fi
-            echo "Retry attempt $i failed, retrying in 10s..."
+            echo "Redeploy attempt $i failed, retrying in 10s..."
             sleep 10
-            if [ "$i" -eq 3 ]; then
+            if [ $i -eq 3 ]; then
               echo "Koyeb redeploy failed after 3 attempts!"
               exit 1
             fi
