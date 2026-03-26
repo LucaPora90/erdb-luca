@@ -41,3 +41,19 @@ jobs:
             echo "Sync failed for ${{ matrix.repo }}"
             exit 1
           fi
+
+  rebuild-spaces:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger HuggingFace Space rebuild (Erdbluca)
+        run: |
+          curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+          https://huggingface.co/api/spaces/wrangler90/Erdbluca/restart
+
+      - name: Trigger HuggingFace Space rebuild (EasyProxy)
+        run: |
+          curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+          https://huggingface.co/api/spaces/wrangler90/EasyProxy/restart
