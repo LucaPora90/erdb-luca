@@ -38,18 +38,18 @@ jobs:
 
           if [ "$response" -eq 409 ]; then
             echo "Already up to date"
-            echo "::set-output name=updated::false"
+            echo "updated=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           if [ "$response" -ne 200 ]; then
             echo "Sync failed for ${{ matrix.repo }}"
-            echo "::set-output name=updated::false"
+            echo "updated=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
           echo "Repo updated!"
-          echo "::set-output name=updated::true"
+          echo "updated=true" >> $GITHUB_OUTPUT
 
   rebuild-spaces:
     needs: sync
