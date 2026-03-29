@@ -32,37 +32,25 @@ jobs:
             key=$2
 
             for i in 1 2 3; do
-              echo "----------------------------------------"
-              echo "[$(date)] Attempt $i: Syncing $repo"
+              echo "[$(date)] Syncing $repo (attempt $i)"
 
-              response_body=$(mktemp)
-              response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
+              response=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" \
                 -X POST \
                 -H "Authorization: Bearer ${{ secrets.FORK_SYNC_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/repos/$repo/merge-upstream \
                 -d "{\"branch\":\"main\"}")
 
-              echo "HTTP status: $response"
-
               if [ "$response" -eq 200 ]; then
-                echo "::notice::Repo updated: $repo"
+                echo "::notice::Updated $repo"
                 eval "$key=true"
-                rm -f "$response_body"
                 return
               elif [ "$response" -eq 409 ]; then
                 echo "Already up to date: $repo"
-                rm -f "$response_body"
                 return
               fi
 
-              if [ "$i" -eq 3 ]; then
-                echo "::error::Sync failed for $repo"
-                cat "$response_body"
-                rm -f "$response_body"
-                exit 1
-              fi
-
+              [ "$i" -eq 3 ] && exit 1
               sleep 10
             done
           }
@@ -83,21 +71,57 @@ jobs:
         run: |
           set -euo pipefail
 
-          response=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true")
+          for i in 1 2 3; do
+            echo "[$(date)] Rebuilding EasyProxy (attempt $i)"
 
-          [ "$response" -eq 200 ] || exit 1
+            response_body=$(mktemp)
+            response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+              "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true")
+
+            echo "HTTP status: $response"
+
+            if [ "$response" -eq 200 ]; then
+              echo "::notice::EasyProxy rebuilt"
+              rm -f "$response_body"
+              break
+            fi
+
+            echo "Response:"
+            cat "$response_body"
+            rm -f "$response_body"
+
+            [ "$i" -eq 3 ] && exit 1
+            sleep 10
+          done
 
       - name: Factory rebuild Erdbluca
         if: needs.sync.outputs.updated_erdb == 'true'
         run: |
           set -euo pipefail
 
-          response=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true")
+          for i in 1 2 3; do
+            echo "[$(date)] Rebuilding Erdbluca (attempt $i)"
 
-          [ "$response" -eq 200 ] || exit 1
+            response_body=$(mktemp)
+            response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+              "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true")
+
+            echo "HTTP status: $response"
+
+            if [ "$response" -eq 200 ]; then
+              echo "::notice::Erdbluca rebuilt"
+              rm -f "$response_body"
+              break
+            fi
+
+            echo "Response:"
+            cat "$response_body"
+            rm -f "$response_body"
+
+            [ "$i" -eq 3 ] && exit 1
+            sleep 10
+          done
