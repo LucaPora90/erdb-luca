@@ -83,67 +83,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          for i in 1 2 3; do
-            echo "----------------------------------------"
-            echo "[$(date)] Rebuilding EasyProxy (attempt $i)"
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true")
 
-            response_body=$(mktemp)
-            response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-              "https://huggingface.co/api/spaces/wrangler90/EasyProxy/restart?factory=true")
-
-            echo "HTTP status: $response"
-            echo "Response:"
-            cat "$response_body"
-
-            if [ "$response" -eq 200 ]; then
-              echo "::notice::EasyProxy rebuilt"
-              rm -f "$response_body"
-              break
-            fi
-
-            if [ "$i" -eq 3 ]; then
-              echo "::error::EasyProxy rebuild failed"
-              rm -f "$response_body"
-              exit 1
-            fi
-
-            rm -f "$response_body"
-            sleep 10
-          done
+          [ "$response" -eq 200 ] || exit 1
 
       - name: Factory rebuild Erdbluca
         if: needs.sync.outputs.updated_erdb == 'true'
         run: |
           set -euo pipefail
 
-          for i in 1 2 3; do
-            echo "----------------------------------------"
-            echo "[$(date)] Rebuilding Erdbluca (attempt $i)"
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true")
 
-            response_body=$(mktemp)
-            response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-              "https://huggingface.co/api/spaces/wrangler90/Erdbluca/restart?factory=true")
-
-            echo "HTTP status: $response"
-            echo "Response:"
-            cat "$response_body"
-
-            if [ "$response" -eq 200 ]; then
-              echo "::notice::Erdbluca rebuilt"
-              rm -f "$response_body"
-              break
-            fi
-
-            if [ "$i" -eq 3 ]; then
-              echo "::error::Erdbluca rebuild failed"
-              rm -f "$response_body"
-              exit 1
-            fi
-
-            rm -f "$response_body"
-            sleep 10
-          done
+          [ "$response" -eq 200 ] || exit 1
