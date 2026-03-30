@@ -1,65 +1,82 @@
-name: Sync & Factory Rebuild
+name: Sync Forks & Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *'   # ogni ora
-  workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    - cron: '0 * * * *'  # ogni ora
+  workflow_dispatch:  # permette run manuale
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Checkout erdb-luca fork
-        id: sync-erdb
+      # Checkout fork repo
+      - name: Checkout erdb-luca
         uses: actions/checkout@v4
         with:
           repository: LucaPora90/erdb-luca
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
-          fetch-depth: 0
 
-      - name: Pull upstream erdb
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/realbestia1/erdb.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Merge upstream
+        id: erdb-merge
         run: |
-          git remote add upstream https://github.com/realbestia1/erdb.git
-          git fetch upstream
-          git merge upstream/main
-          git push origin main
-        continue-on-error: true
+          git checkout main
+          git merge upstream/main --no-edit || echo "No changes"
+          echo "::set-output name=updated::$(git log -1 --pretty=%H)"
 
-      - name: Checkout EasyProxy fork
-        id: sync-easyproxy
+      - name: Push if updated
+        if: steps.erdb-merge.outputs.updated != ''
+        run: git push origin main
+
+      # Repeat for EasyProxy
+      - name: Checkout EasyProxy
         uses: actions/checkout@v4
         with:
           repository: LucaPora90/EasyProxy
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
-          fetch-depth: 0
+          path: EasyProxy
 
-      - name: Pull upstream EasyProxy
+      - name: Add upstream remote EasyProxy
+        run: git remote add upstream https://github.com/realbestia1/EasyProxy.git
+        working-directory: EasyProxy
+
+      - name: Fetch upstream EasyProxy
+        run: git fetch upstream main
+        working-directory: EasyProxy
+
+      - name: Merge upstream EasyProxy
+        id: easyproxy-merge
         run: |
-          git remote add upstream https://github.com/realbestia1/EasyProxy.git
-          git fetch upstream
-          git merge upstream/main
-          git push origin main
-        continue-on-error: true
+          git checkout main
+          git merge upstream/main --no-edit || echo "No changes"
+          echo "::set-output name=updated::$(git log -1 --pretty=%H)"
+        working-directory: EasyProxy
 
-      - name: Factory rebuild of Spaces
-        if: ${{ steps.sync-erdb.outcome == 'success' || steps.sync-easyproxy.outcome == 'success' }}
+      - name: Push EasyProxy if updated
+        if: steps.easyproxy-merge.outputs.updated != ''
+        run: git push origin main
+        working-directory: EasyProxy
+
+      # Factory rebuild Space solo se ci sono stati aggiornamenti
+      - name: Rebuild erdb-luca Space
+        if: steps.erdb-merge.outputs.updated != ''
         run: |
-          echo "Factory rebuild degli Space in corso..."
-          python3 -m pip install --upgrade huggingface_hub
+          echo "Triggering factory rebuild for erdb-luca Space..."
+          # comando reale dipende dal tuo setup HF CLI/API
+          # es: huggingface-cli space build LucaPora90/erdb-luca --yes
 
-          # Login Hugging Face
-          echo $HF_TOKEN | python3 -m huggingface_hub login --token
-
-          # Rebuild Space erdb-luca
-          python3 -m huggingface_hub api repos-update --repo_id LucaPora90/erdb-luca-space --space
-
-          # Rebuild Space EasyProxy
-          python3 -m huggingface_hub api repos-update --repo_id LucaPora90/EasyProxy-space --space
-
-          echo "Factory rebuild completato."
+      - name: Rebuild EasyProxy Space
+        if: steps.easyproxy-merge.outputs.updated != ''
+        run: |
+          echo "Triggering factory rebuild for EasyProxy Space..."
+          # comando reale dipende dal tuo setup HF CLI/API
+          # es: huggingface-cli space build LucaPora90/EasyProxy --yes
