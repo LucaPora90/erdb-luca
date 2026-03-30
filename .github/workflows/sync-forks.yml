@@ -1,62 +1,65 @@
-name: Sync Forks & Rebuild Spaces
+name: Sync & Factory Rebuild
 
 on:
   schedule:
-    - cron: "0 * * * *"   # ogni ora
-  workflow_dispatch:       # trigger manuale
+    - cron: '0 * * * *'   # ogni ora
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NODE_ENV: production
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}   # token Hugging Face con permessi repo/spaces
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout workflow repo
-        uses: actions/checkout@v4
-
-      # ---- Sync erdb-luca fork ----
-      - name: Sync erdb-luca fork
+      - name: Checkout erdb-luca fork
         id: sync-erdb
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
-          git fetch upstream
-          git checkout main
-          git merge upstream/main || echo "No updates to merge"
-          git push origin main || echo "No updates to push"
+        uses: actions/checkout@v4
+        with:
+          repository: LucaPora90/erdb-luca
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+          fetch-depth: 0
 
-      # ---- Sync EasyProxy fork ----
-      - name: Sync EasyProxy fork
+      - name: Pull upstream erdb
+        run: |
+          git remote add upstream https://github.com/realbestia1/erdb.git
+          git fetch upstream
+          git merge upstream/main
+          git push origin main
+        continue-on-error: true
+
+      - name: Checkout EasyProxy fork
         id: sync-easyproxy
-        run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
-          git fetch upstream
-          git checkout main
-          git merge upstream/main || echo "No updates to merge"
-          git push origin main || echo "No updates to push"
+        uses: actions/checkout@v4
+        with:
+          repository: LucaPora90/EasyProxy
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+          fetch-depth: 0
 
-      # ---- Conditional Factory Rebuild ----
+      - name: Pull upstream EasyProxy
+        run: |
+          git remote add upstream https://github.com/realbestia1/EasyProxy.git
+          git fetch upstream
+          git merge upstream/main
+          git push origin main
+        continue-on-error: true
+
       - name: Factory rebuild of Spaces
         if: ${{ steps.sync-erdb.outcome == 'success' || steps.sync-easyproxy.outcome == 'success' }}
         run: |
           echo "Factory rebuild degli Space in corso..."
-          pip install --upgrade huggingface_hub
-          huggingface-cli login --token $HF_TOKEN
-          
+          python3 -m pip install --upgrade huggingface_hub
+
+          # Login Hugging Face
+          echo $HF_TOKEN | python3 -m huggingface_hub login --token
+
           # Rebuild Space erdb-luca
-          huggingface-cli repo delete erdb-luca-space --yes || true
-          huggingface-cli repo create erdb-luca-space --space || true
-          huggingface-cli repo push ./erdb-luca ghcr.io/LucaPora90/erdb-luca:latest --space || true
-          
+          python3 -m huggingface_hub api repos-update --repo_id LucaPora90/erdb-luca-space --space
+
           # Rebuild Space EasyProxy
-          huggingface-cli repo delete easyproxy-space --yes || true
-          huggingface-cli repo create easyproxy-space --space || true
-          huggingface-cli repo push ./EasyProxy ghcr.io/LucaPora90/EasyProxy:latest --space || true
+          python3 -m huggingface_hub api repos-update --repo_id LucaPora90/EasyProxy-space --space
 
           echo "Factory rebuild completato."
