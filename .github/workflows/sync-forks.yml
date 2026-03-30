@@ -1,4 +1,4 @@
-name: Sync forks automatically + conditional HF factory rebuild
+name: Full auto pipeline PRO (sync + docker + HF)
 
 on:
   schedule:
@@ -7,8 +7,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: sync-and-rebuild
+  group: full-auto-pipeline
   cancel-in-progress: true
+
+env:
+  IMAGE_NAME: erdb-luca
+  REGISTRY: ghcr.io
+  OWNER: lucapora90   # ⚠️ DEVE essere lowercase
 
 jobs:
   sync:
@@ -32,37 +37,25 @@ jobs:
             key=$2
 
             for i in 1 2 3; do
-              echo "----------------------------------------"
-              echo "[$(date)] Attempt $i: Syncing $repo"
+              echo "[$(date)] Syncing $repo (attempt $i)"
 
-              response_body=$(mktemp)
-              response=$(curl -s --max-time 30 -o "$response_body" -w "%{http_code}" \
+              response=$(curl -s -o /dev/null -w "%{http_code}" \
                 -X POST \
                 -H "Authorization: Bearer ${{ secrets.FORK_SYNC_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/repos/$repo/merge-upstream \
                 -d "{\"branch\":\"main\"}")
 
-              echo "HTTP status: $response"
-
               if [ "$response" -eq 200 ]; then
-                echo "::notice::Repo updated: $repo"
+                echo "::notice::Updated $repo"
                 eval "$key=true"
-                rm -f "$response_body"
                 return
               elif [ "$response" -eq 409 ]; then
                 echo "Already up to date: $repo"
-                rm -f "$response_body"
                 return
               fi
 
-              if [ "$i" -eq 3 ]; then
-                echo "::error::Sync failed for $repo"
-                cat "$response_body"
-                rm -f "$response_body"
-                exit 1
-              fi
-
+              [ "$i" -eq 3 ] && exit 1
               sleep 10
             done
           }
@@ -73,51 +66,58 @@ jobs:
           echo "updated_easyproxy=$updated_easyproxy" >> $GITHUB_OUTPUT
           echo "updated_erdb=$updated_erdb" >> $GITHUB_OUTPUT
 
-  rebuild-spaces:
+  docker:
     needs: sync
+    if: needs.sync.outputs.updated_erdb == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Factory rebuild EasyProxy
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          echo "IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
+          echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build & Push (multi-arch + cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.IMAGE }}:latest
+            ${{ steps.meta.outputs.IMAGE }}:${{ steps.meta.outputs.TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  rebuild-spaces:
+    needs: [sync, docker]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Rebuild EasyProxy
         if: needs.sync.outputs.updated_easyproxy == 'true'
         run: |
           set -euo pipefail
+          curl -s -L -X POST \
+            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true"
 
-          for i in 1 2 3; do
-            echo "[$(date)] Rebuilding EasyProxy (attempt $i)"
-
-            response=$(curl -s -L --max-time 30 -o /dev/null -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-              "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true")
-
-            if [ "$response" -eq 200 ]; then
-              echo "::notice::EasyProxy rebuilt"
-              break
-            fi
-
-            [ "$i" -eq 3 ] && exit 1
-            sleep 10
-          done
-
-      - name: Factory rebuild Erdbluca
+      - name: Rebuild Erdbluca
         if: needs.sync.outputs.updated_erdb == 'true'
         run: |
           set -euo pipefail
-
-          for i in 1 2 3; do
-            echo "[$(date)] Rebuilding Erdbluca (attempt $i)"
-
-            response=$(curl -s -L --max-time 30 -o /dev/null -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-              "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true")
-
-            if [ "$response" -eq 200 ]; then
-              echo "::notice::Erdbluca rebuilt"
-              break
-            fi
-
-            [ "$i" -eq 3 ] && exit 1
-            sleep 10
-          done
+          curl -s -L -X POST \
+            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
+            "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true"
