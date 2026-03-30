@@ -3,7 +3,7 @@ name: Sync Fork & Rebuild Spaces
 on:
   schedule:
     - cron: '0 * * * *'  # ogni ora
-  workflow_dispatch:      # trigger manuale
+  workflow_dispatch:
 
 jobs:
   sync-and-rebuild:
@@ -11,6 +11,7 @@ jobs:
     env:
       HF_API_TOKEN: ${{ secrets.HF_TOKEN }}
       FORK_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repo
@@ -18,18 +19,31 @@ jobs:
         with:
           token: ${{ secrets.FORK_SYNC_TOKEN }}
 
+      - name: Cache Node modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Python packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Sync erdb-luca fork
         id: sync-erdb
         run: |
           git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
           git fetch upstream
           git checkout main
-          UPDATES=$(git log HEAD..upstream/main --oneline)
-          if [ -n "$UPDATES" ]; then
-            git merge upstream/main
-            git push origin main
-            echo "ERDB_UPDATED=true" >> $GITHUB_ENV
-          fi
+          git merge upstream/main || echo "No updates"
+          git push origin main || echo "Nothing to push"
+          echo "updated=true" >> $GITHUB_OUTPUT
 
       - name: Sync EasyProxy fork
         id: sync-proxy
@@ -37,20 +51,24 @@ jobs:
           git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
           git fetch upstream
           git checkout main
-          UPDATES=$(git log HEAD..upstream/main --oneline)
-          if [ -n "$UPDATES" ]; then
-            git merge upstream/main
-            git push origin main
-            echo "PROXY_UPDATED=true" >> $GITHUB_ENV
-          fi
+          git merge upstream/main || echo "No updates"
+          git push origin main || echo "Nothing to push"
+          echo "updated=true" >> $GITHUB_OUTPUT
 
       - name: Install HF CLI
-        run: pip install --upgrade huggingface_hub
-
-      - name: Trigger HF Spaces rebuild (parallel)
-        if: env.ERDB_UPDATED == 'true' || env.PROXY_UPDATED == 'true'
         run: |
-          echo "Triggering factory rebuilds..."
-          (( env.ERDB_UPDATED == 'true' )) && hf space rebuild --name LucaPora90/erdb-luca &
-          (( env.PROXY_UPDATED == 'true' )) && hf space rebuild --name LucaPora90/EasyProxy &
+          pip install --upgrade huggingface_hub
+
+      - name: Trigger HF Space rebuild in parallel
+        run: |
+          echo "Checking which Spaces need rebuild..."
+          if [[ "${{ steps.sync-erdb.outputs.updated }}" == "true" ]]; then
+            echo "erdb-luca updated -> rebuild triggered"
+            hf space rebuild --name LucaPora90/erdb-luca &
+          fi
+          if [[ "${{ steps.sync-proxy.outputs.updated }}" == "true" ]]; then
+            echo "EasyProxy updated -> rebuild triggered"
+            hf space rebuild --name LucaPora90/EasyProxy &
+          fi
           wait
+          echo "Rebuilds completed"
