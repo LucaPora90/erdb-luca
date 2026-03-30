@@ -1,124 +1,62 @@
-name: Full auto pipeline PRO (sync + docker + HF)
+name: Ultra-Light Sync & Factory Rebuild
 
 on:
+  workflow_dispatch: # esecuzione manuale
   schedule:
-    - cron: "0 * * * *"
-      timezone: "Europe/Rome"
-  workflow_dispatch:
-
-concurrency:
-  group: full-auto-pipeline
-  cancel-in-progress: true
-
-env:
-  IMAGE_NAME: erdb-luca
-  REGISTRY: ghcr.io
-  OWNER: lucapora90   # ⚠️ DEVE essere lowercase
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # Node.js 24 forced
+    - cron: '0 2 * * *' # ogni giorno alle 2:00 AM
 
 jobs:
-  sync:
+  sync-and-rebuild:
     runs-on: ubuntu-latest
-
-    outputs:
-      updated_easyproxy: ${{ steps.check.outputs.updated_easyproxy }}
-      updated_erdb: ${{ steps.check.outputs.updated_erdb }}
-
     steps:
-      - name: Sync forks
-        id: check
-        run: |
-          set -euo pipefail
-
-          updated_easyproxy=false
-          updated_erdb=false
-
-          sync_repo () {
-            repo=$1
-            key=$2
-
-            for i in 1 2 3; do
-              echo "[$(date)] Syncing $repo (attempt $i)"
-
-              response=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST \
-                -H "Authorization: Bearer ${{ secrets.FORK_SYNC_TOKEN }}" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/$repo/merge-upstream \
-                -d "{\"branch\":\"main\"}")
-
-              if [ "$response" -eq 200 ]; then
-                echo "::notice::Updated $repo"
-                eval "$key=true"
-                return
-              elif [ "$response" -eq 409 ]; then
-                echo "Already up to date: $repo"
-                return
-              fi
-
-              [ "$i" -eq 3 ] && exit 1
-              sleep 10
-            done
-          }
-
-          sync_repo "LucaPora90/EasyProxy" updated_easyproxy
-          sync_repo "LucaPora90/erdb-luca" updated_erdb
-
-          echo "updated_easyproxy=$updated_easyproxy" >> $GITHUB_OUTPUT
-          echo "updated_erdb=$updated_erdb" >> $GITHUB_OUTPUT
-
-  docker:
-    needs: sync
-    if: needs.sync.outputs.updated_erdb == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Extract metadata
-        id: meta
-        run: |
-          echo "IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
-          echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
-      - name: Build & Push (multi-arch + cache)
-        uses: docker/build-push-action@v6
+      # 1️⃣ Aggiorna erdb-luca
+      - name: Checkout erdb-luca
+        uses: actions/checkout@v4
         with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ steps.meta.outputs.IMAGE }}:latest
-            ${{ steps.meta.outputs.IMAGE }}:${{ steps.meta.outputs.TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          repository: LucaPora90/erdb-luca
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-  rebuild-spaces:
-    needs: [sync, docker]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Rebuild EasyProxy
-        if: needs.sync.outputs.updated_easyproxy == 'true'
+      - name: Sync erdb-luca with upstream
         run: |
-          set -euo pipefail
-          curl -s -L -X POST \
-            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true"
+          git remote add upstream https://github.com/realbestia1/erdb.git || true
+          git fetch upstream
+          git reset --hard upstream/main
+          git push origin HEAD:main --force
 
-      - name: Rebuild Erdbluca
-        if: needs.sync.outputs.updated_erdb == 'true'
+      # 2️⃣ Aggiorna EasyProxy
+      - name: Checkout EasyProxy
+        uses: actions/checkout@v4
+        with:
+          repository: LucaPora90/EasyProxy
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync EasyProxy with upstream
         run: |
-          set -euo pipefail
-          curl -s -L -X POST \
-            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true"
+          git remote add upstream https://github.com/realbestia1/EasyProxy.git || true
+          git fetch upstream
+          git reset --hard upstream/main
+          git push origin HEAD:main --force
+
+      # 3️⃣ Trigger factory rebuild erdb-luca Space
+      - name: Factory rebuild erdb-luca Space
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: "LucaPora90",
+              repo: "erdb-luca",
+              workflow_id: "factory-rebuild.yml",
+              ref: "main"
+            })
+
+      # 4️⃣ Trigger factory rebuild EasyProxy Space
+      - name: Factory rebuild EasyProxy Space
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: "LucaPora90",
+              repo: "EasyProxy",
+              workflow_id: "factory-rebuild.yml",
+              ref: "main"
+            })
