@@ -1,62 +1,55 @@
-name: Ultra-Light Sync & Factory Rebuild
+name: Sync Forks & Factory Rebuild
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  workflow_dispatch: # esecuzione manuale
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *' # ogni giorno alle 2:00 AM
+    - cron: '0 2 * * *'  # Ogni giorno alle 2 di notte
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
     steps:
-      # 1️⃣ Aggiorna erdb-luca
       - name: Checkout erdb-luca
         uses: actions/checkout@v4
         with:
           repository: LucaPora90/erdb-luca
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sync erdb-luca with upstream
+      - name: Pull upstream erdb-luca
         run: |
           git remote add upstream https://github.com/realbestia1/erdb.git || true
           git fetch upstream
-          git reset --hard upstream/main
-          git push origin HEAD:main --force
+          git merge upstream/main --allow-unrelated-histories -m "Sync upstream" || true
+          git push origin main
 
-      # 2️⃣ Aggiorna EasyProxy
+      - name: Trigger ERDB Space rebuild
+        uses: hugoalh/hf-space-action@v1
+        with:
+          space: LucaPora90/erdb-luca
+          token: ${{ secrets.HF_TOKEN }}
+          rebuild: true
+
       - name: Checkout EasyProxy
         uses: actions/checkout@v4
         with:
           repository: LucaPora90/EasyProxy
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sync EasyProxy with upstream
+      - name: Pull upstream EasyProxy
         run: |
           git remote add upstream https://github.com/realbestia1/EasyProxy.git || true
           git fetch upstream
-          git reset --hard upstream/main
-          git push origin HEAD:main --force
+          git merge upstream/main --allow-unrelated-histories -m "Sync upstream" || true
+          git push origin main
 
-      # 3️⃣ Trigger factory rebuild erdb-luca Space
-      - name: Factory rebuild erdb-luca Space
-        uses: actions/github-script@v7
+      - name: Trigger EasyProxy Space rebuild
+        uses: hugoalh/hf-space-action@v1
         with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: "LucaPora90",
-              repo: "erdb-luca",
-              workflow_id: "factory-rebuild.yml",
-              ref: "main"
-            })
-
-      # 4️⃣ Trigger factory rebuild EasyProxy Space
-      - name: Factory rebuild EasyProxy Space
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: "LucaPora90",
-              repo: "EasyProxy",
-              workflow_id: "factory-rebuild.yml",
-              ref: "main"
-            })
+          space: LucaPora90/EasyProxy
+          token: ${{ secrets.HF_TOKEN }}
+          rebuild: true
