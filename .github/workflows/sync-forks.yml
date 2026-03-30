@@ -1,124 +1,83 @@
-name: Full auto pipeline GHOST (sync + docker + HF)
+name: Ghost Hyper-Speed Pipeline
 
 on:
-  schedule:
-    - cron: "0 * * * *"
-      timezone: "Europe/Rome"
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
-  group: full-auto-pipeline-ghost
+  group: ghost-hyper-speed
   cancel-in-progress: true
 
 env:
   IMAGE_NAME: erdb-luca
   REGISTRY: ghcr.io
   OWNER: lucapora90
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # ⚡ Node.js 24 for all JS actions
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     outputs:
       updated_easyproxy: ${{ steps.check.outputs.updated_easyproxy }}
       updated_erdb: ${{ steps.check.outputs.updated_erdb }}
-
     steps:
-      - name: Sync forks
+      - name: Silent fork sync
         id: check
         run: |
           set -euo pipefail
-
           updated_easyproxy=false
           updated_erdb=false
-
-          sync_repo () {
-            repo=$1
-            key=$2
-
-            for i in 1 2 3; do
-              echo "[$(date)] Syncing $repo (attempt $i)"
-
-              response=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST \
-                -H "Authorization: Bearer ${{ secrets.FORK_SYNC_TOKEN }}" \
-                -H "Accept: application/vnd.github+json" \
-                https://api.github.com/repos/$repo/merge-upstream \
-                -d "{\"branch\":\"main\"}")
-
-              if [ "$response" -eq 200 ]; then
-                echo "::notice::Updated $repo"
-                eval "$key=true"
-                return
-              elif [ "$response" -eq 409 ]; then
-                echo "Already up to date: $repo"
-                return
-              fi
-
-              [ "$i" -eq 3 ] && exit 1
-              sleep 10
-            done
+          sync_repo() {
+            repo=$1; key=$2
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${{ secrets.FORK_SYNC_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/$repo/merge-upstream \
+              -d '{"branch":"main"}')
+            [[ "$response" -eq 200 ]] && eval "$key=true"
           }
-
           sync_repo "LucaPora90/EasyProxy" updated_easyproxy
           sync_repo "LucaPora90/erdb-luca" updated_erdb
-
           echo "updated_easyproxy=$updated_easyproxy" >> $GITHUB_OUTPUT
           echo "updated_erdb=$updated_erdb" >> $GITHUB_OUTPUT
 
-  docker:
+  docker-build-push:
     needs: sync
     if: needs.sync.outputs.updated_erdb == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Extract metadata
-        id: meta
-        run: |
-          echo "IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
-          echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
-      - name: Build & Push (multi-arch + cache)
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Hyper-speed build & push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ steps.meta.outputs.IMAGE }}:latest
-            ${{ steps.meta.outputs.IMAGE }}:${{ steps.meta.outputs.TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha::7 }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:cache,mode=max
+          build-args: |
+            NODE_ENV=production
+          quiet: true
 
-  rebuild-spaces:
-    needs: [sync, docker]
+  hf-rebuild:
+    needs: sync
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        space: [easyproxy-space, erdbluca]
     steps:
-      - name: Rebuild EasyProxy
-        if: needs.sync.outputs.updated_easyproxy == 'true'
+      - name: Silent HF Spaces rebuild
+        if: (matrix.space == 'easyproxy-space' && needs.sync.outputs.updated_easyproxy == 'true') || 
+            (matrix.space == 'erdbluca' && needs.sync.outputs.updated_erdb == 'true')
         run: |
-          set -euo pipefail
           curl -s -L -X POST \
             -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/easyproxy-space/restart?factory=true"
-
-      - name: Rebuild Erdbluca
-        if: needs.sync.outputs.updated_erdb == 'true'
-        run: |
-          set -euo pipefail
-          curl -s -L -X POST \
-            -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
-            "https://huggingface.co/api/spaces/wrangler90/erdbluca/restart?factory=true"
+            "https://huggingface.co/api/spaces/wrangler90/${{ matrix.space }}/restart?factory=true" >/dev/null 2>&1
