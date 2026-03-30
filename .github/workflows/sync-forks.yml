@@ -1,9 +1,9 @@
-name: Sync Forks & Rebuild Spaces
+name: Sync Forks & Factory Rebuild Spaces
 
 on:
   schedule:
     - cron: '0 * * * *'  # ogni ora
-  workflow_dispatch:  # permette run manuale
+  workflow_dispatch:
 
 jobs:
   sync-and-rebuild:
@@ -11,7 +11,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      # Checkout fork repo
+      # Sync erdb-luca
       - name: Checkout erdb-luca
         uses: actions/checkout@v4
         with:
@@ -19,24 +19,28 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
 
-      - name: Add upstream remote
+      - name: Add upstream remote for erdb-luca
         run: git remote add upstream https://github.com/realbestia1/erdb.git
 
-      - name: Fetch upstream
+      - name: Fetch upstream erdb-luca
         run: git fetch upstream main
 
-      - name: Merge upstream
+      - name: Merge upstream erdb-luca and detect changes
         id: erdb-merge
         run: |
           git checkout main
           git merge upstream/main --no-edit || echo "No changes"
-          echo "::set-output name=updated::$(git log -1 --pretty=%H)"
+          if [ "$(git log -1 --pretty=%H --not origin/main)" ]; then
+            echo "updated=true" >> $GITHUB_ENV
+          else
+            echo "updated=false" >> $GITHUB_ENV
+          fi
 
-      - name: Push if updated
-        if: steps.erdb-merge.outputs.updated != ''
+      - name: Push erdb-luca if updated
+        if: env.updated == 'true'
         run: git push origin main
 
-      # Repeat for EasyProxy
+      # Sync EasyProxy
       - name: Checkout EasyProxy
         uses: actions/checkout@v4
         with:
@@ -53,30 +57,34 @@ jobs:
         run: git fetch upstream main
         working-directory: EasyProxy
 
-      - name: Merge upstream EasyProxy
+      - name: Merge upstream EasyProxy and detect changes
         id: easyproxy-merge
         run: |
           git checkout main
           git merge upstream/main --no-edit || echo "No changes"
-          echo "::set-output name=updated::$(git log -1 --pretty=%H)"
+          if [ "$(git log -1 --pretty=%H --not origin/main)" ]; then
+            echo "easy_updated=true" >> $GITHUB_ENV
+          else
+            echo "easy_updated=false" >> $GITHUB_ENV
+          fi
         working-directory: EasyProxy
 
       - name: Push EasyProxy if updated
-        if: steps.easyproxy-merge.outputs.updated != ''
+        if: env.easy_updated == 'true'
         run: git push origin main
         working-directory: EasyProxy
 
-      # Factory rebuild Space solo se ci sono stati aggiornamenti
+      # Factory rebuild Spaces
       - name: Rebuild erdb-luca Space
-        if: steps.erdb-merge.outputs.updated != ''
+        if: env.updated == 'true'
         run: |
           echo "Triggering factory rebuild for erdb-luca Space..."
-          # comando reale dipende dal tuo setup HF CLI/API
-          # es: huggingface-cli space build LucaPora90/erdb-luca --yes
+          huggingface-cli login --token ${{ secrets.HF_TOKEN }}
+          huggingface-cli space build LucaPora90/erdb-luca --yes
 
       - name: Rebuild EasyProxy Space
-        if: steps.easyproxy-merge.outputs.updated != ''
+        if: env.easy_updated == 'true'
         run: |
           echo "Triggering factory rebuild for EasyProxy Space..."
-          # comando reale dipende dal tuo setup HF CLI/API
-          # es: huggingface-cli space build LucaPora90/EasyProxy --yes
+          huggingface-cli login --token ${{ secrets.HF_TOKEN }}
+          huggingface-cli space build LucaPora90/EasyProxy --yes
