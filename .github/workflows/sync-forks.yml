@@ -1,4 +1,4 @@
-name: Sync Fork & Rebuild Spaces
+name: Sync Forks & Factory Rebuild Spaces
 
 on:
   schedule:
@@ -6,38 +6,76 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # forza Node 24 per tutte le action
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout erdb-luca
+        uses: actions/checkout@v4
+        with:
+          repository: LucaPora90/erdb-luca
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-    - name: Sync erdb-luca fork
-      run: |
-        git clone https://github.com/LucaPora90/erdb-luca.git erdb-luca
-        cd erdb-luca
-        git remote add upstream https://github.com/realbestia1/erdb.git || true
-        git fetch upstream
-        git merge upstream/main
-        git push origin main
+      - name: Fetch upstream erdb-luca
+        run: |
+          git remote add upstream https://github.com/realbestia1/erdb.git || true
+          git fetch upstream
 
-    - name: Sync EasyProxy fork
-      run: |
-        git clone https://github.com/LucaPora90/EasyProxy.git EasyProxy
-        cd EasyProxy
-        git remote add upstream https://github.com/realbestia1/EasyProxy.git || true
-        git fetch upstream
-        git merge upstream/main
-        git push origin main
+      - name: Check erdb-luca updates
+        id: erdb_update
+        run: |
+          UPSTREAM=$(git rev-parse upstream/main)
+          LOCAL=$(git rev-parse HEAD)
+          echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
+          echo "local=$LOCAL" >> $GITHUB_OUTPUT
+          [[ "$UPSTREAM" != "$LOCAL" ]] && echo "updated=true" >> $GITHUB_OUTPUT || echo "updated=false" >> $GITHUB_OUTPUT
 
-    - name: Trigger Space factory rebuilds
-      uses: huggingface/spaces-action@v0.2.0  # assicurati che sia la versione corretta
-      with:
-        space_ids: |
-          LucaPora90/erdb-luca
-          LucaPora90/EasyProxy
-        rebuild: true
+      - name: Sync erdb-luca fork
+        if: steps.erdb_update.outputs.updated == 'true'
+        run: |
+          git merge upstream/main --allow-unrelated-histories -m "Sync upstream" || true
+          git push origin main
+
+      - name: Trigger erdb-luca Space factory rebuild
+        if: steps.erdb_update.outputs.updated == 'true'
+        run: |
+          curl -s -X POST "https://huggingface.co/api/spaces/LucaPora90/erdb-luca/restart?factory=true" \
+            -H "Authorization: Bearer $HF_TOKEN"
+
+      - name: Checkout EasyProxy
+        uses: actions/checkout@v4
+        with:
+          repository: LucaPora90/EasyProxy
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fetch upstream EasyProxy
+        run: |
+          git remote add upstream https://github.com/realbestia1/EasyProxy.git || true
+          git fetch upstream
+
+      - name: Check EasyProxy updates
+        id: easy_update
+        run: |
+          UPSTREAM=$(git rev-parse upstream/main)
+          LOCAL=$(git rev-parse HEAD)
+          echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
+          echo "local=$LOCAL" >> $GITHUB_OUTPUT
+          [[ "$UPSTREAM" != "$LOCAL" ]] && echo "updated=true" >> $GITHUB_OUTPUT || echo "updated=false" >> $GITHUB_OUTPUT
+
+      - name: Sync EasyProxy fork
+        if: steps.easy_update.outputs.updated == 'true'
+        run: |
+          git merge upstream/main --allow-unrelated-histories -m "Sync upstream" || true
+          git push origin main
+
+      - name: Trigger EasyProxy Space factory rebuild
+        if: steps.easy_update.outputs.updated == 'true'
+        run: |
+          curl -s -X POST "https://huggingface.co/api/spaces/LucaPora90/EasyProxy/restart?factory=true" \
+            -H "Authorization: Bearer $HF_TOKEN"
