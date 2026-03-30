@@ -1,90 +1,63 @@
-name: Sync Forks & Factory Rebuild Spaces
+name: Sync Fork & Ghost Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *'  # ogni ora
+    - cron: '0 * * * *' # ogni ora
   workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      # Sync erdb-luca
-      - name: Checkout erdb-luca
+      # Checkout repo principale
+      - name: Checkout main repo
         uses: actions/checkout@v4
         with:
-          repository: LucaPora90/erdb-luca
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: main
+          fetch-depth: 0
 
-      - name: Add upstream remote for erdb-luca
-        run: git remote add upstream https://github.com/realbestia1/erdb.git
-
-      - name: Fetch upstream erdb-luca
-        run: git fetch upstream main
-
-      - name: Merge upstream erdb-luca and detect changes
-        id: erdb-merge
+      # Aggiorna fork erdb-luca
+      - name: Sync Fork erdb-luca
+        id: sync-erdb
         run: |
-          git checkout main
-          git merge upstream/main --no-edit || echo "No changes"
-          if [ "$(git log -1 --pretty=%H --not origin/main)" ]; then
-            echo "updated=true" >> $GITHUB_ENV
-          else
-            echo "updated=false" >> $GITHUB_ENV
-          fi
+          git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
+          git fetch upstream
+          git merge upstream/main || echo "No updates"
+          git push origin main || echo "Nothing to push"
+          echo "updated=true" >> $GITHUB_OUTPUT
 
-      - name: Push erdb-luca if updated
-        if: env.updated == 'true'
-        run: git push origin main
+      # Aggiorna fork EasyProxy
+      - name: Sync Fork EasyProxy
+        id: sync-proxy
+        run: |
+          git clone https://github.com/LucaPora90/EasyProxy.git temp
+          cd temp
+          git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
+          git fetch upstream
+          git merge upstream/main || echo "No updates"
+          git push origin main || echo "Nothing to push"
+          echo "updated=true" >> $GITHUB_OUTPUT
+          cd ..
+          rm -rf temp
 
-      # Sync EasyProxy
-      - name: Checkout EasyProxy
-        uses: actions/checkout@v4
+      # Rebuild ERDB Space (ghost, layer cache)
+      - name: Ghost Rebuild ERDB Space
+        if: steps.sync-erdb.outputs.updated == 'true'
+        uses: huggingface/spaces-action@v0
         with:
-          repository: LucaPora90/EasyProxy
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: main
-          path: EasyProxy
+          space: 'LucaPora90/erdb-luca'
+          token: ${{ secrets.HF_API_TOKEN }}
+          rebuild: true
+          ghost-mode: true   # layer precompilati, build ~10s
 
-      - name: Add upstream remote EasyProxy
-        run: git remote add upstream https://github.com/realbestia1/EasyProxy.git
-        working-directory: EasyProxy
-
-      - name: Fetch upstream EasyProxy
-        run: git fetch upstream main
-        working-directory: EasyProxy
-
-      - name: Merge upstream EasyProxy and detect changes
-        id: easyproxy-merge
-        run: |
-          git checkout main
-          git merge upstream/main --no-edit || echo "No changes"
-          if [ "$(git log -1 --pretty=%H --not origin/main)" ]; then
-            echo "easy_updated=true" >> $GITHUB_ENV
-          else
-            echo "easy_updated=false" >> $GITHUB_ENV
-          fi
-        working-directory: EasyProxy
-
-      - name: Push EasyProxy if updated
-        if: env.easy_updated == 'true'
-        run: git push origin main
-        working-directory: EasyProxy
-
-      # Factory rebuild Spaces
-      - name: Rebuild erdb-luca Space
-        if: env.updated == 'true'
-        run: |
-          echo "Triggering factory rebuild for erdb-luca Space..."
-          huggingface-cli login --token ${{ secrets.HF_TOKEN }}
-          huggingface-cli space build LucaPora90/erdb-luca --yes
-
-      - name: Rebuild EasyProxy Space
-        if: env.easy_updated == 'true'
-        run: |
-          echo "Triggering factory rebuild for EasyProxy Space..."
-          huggingface-cli login --token ${{ secrets.HF_TOKEN }}
-          huggingface-cli space build LucaPora90/EasyProxy --yes
+      # Rebuild EasyProxy Space (ghost, layer cache)
+      - name: Ghost Rebuild EasyProxy Space
+        if: steps.sync-proxy.outputs.updated == 'true'
+        uses: huggingface/spaces-action@v0
+        with:
+          space: 'LucaPora90/EasyProxy'
+          token: ${{ secrets.HF_API_TOKEN }}
+          rebuild: true
+          ghost-mode: true   # layer precompilati, build ~10s
