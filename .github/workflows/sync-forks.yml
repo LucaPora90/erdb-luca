@@ -1,62 +1,62 @@
-name: Sync Forks & Factory Rebuild Spaces
+name: Sync Forks & Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Ogni ora
-  workflow_dispatch:      # Trigger manuale possibile
+    - cron: "0 * * * *"   # ogni ora
+  workflow_dispatch:       # trigger manuale
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}  # Hugging Face token per rebuild
+  NODE_ENV: production
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}   # token Hugging Face con permessi repo/spaces
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout erdb-luca
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
-        with:
-          repository: LucaPora90/erdb-luca
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Checkout EasyProxy
-        uses: actions/checkout@v4
-        with:
-          repository: LucaPora90/EasyProxy
-          path: EasyProxy
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Check for updates erdb-luca
-        id: check_erdb
+      # ---- Sync erdb-luca fork ----
+      - name: Sync erdb-luca fork
+        id: sync-erdb
         run: |
-          cd erdb-luca
-          git fetch origin main
-          UPDATES=$(git rev-list HEAD...origin/main --count)
-          echo "updates=$UPDATES" >> $GITHUB_OUTPUT
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
+          git fetch upstream
+          git checkout main
+          git merge upstream/main || echo "No updates to merge"
+          git push origin main || echo "No updates to push"
 
-      - name: Check for updates EasyProxy
-        id: check_easy
+      # ---- Sync EasyProxy fork ----
+      - name: Sync EasyProxy fork
+        id: sync-easyproxy
         run: |
-          cd EasyProxy
-          git fetch origin main
-          UPDATES=$(git rev-list HEAD...origin/main --count)
-          echo "updates=$UPDATES" >> $GITHUB_OUTPUT
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
+          git fetch upstream
+          git checkout main
+          git merge upstream/main || echo "No updates to merge"
+          git push origin main || echo "No updates to push"
 
-      - name: Factory rebuild erdb-luca Space
-        if: steps.check_erdb.outputs.updates != '0'
+      # ---- Conditional Factory Rebuild ----
+      - name: Factory rebuild of Spaces
+        if: ${{ steps.sync-erdb.outcome == 'success' || steps.sync-easyproxy.outcome == 'success' }}
         run: |
-          echo "Updates in erdb-luca detected! Triggering factory rebuild..."
-          curl -X POST \
-            -H "Authorization: Bearer $HF_TOKEN" \
-            https://huggingface.co/api/spaces/rebuild/LucaPora90/erdb-luca
+          echo "Factory rebuild degli Space in corso..."
+          pip install --upgrade huggingface_hub
+          huggingface-cli login --token $HF_TOKEN
+          
+          # Rebuild Space erdb-luca
+          huggingface-cli repo delete erdb-luca-space --yes || true
+          huggingface-cli repo create erdb-luca-space --space || true
+          huggingface-cli repo push ./erdb-luca ghcr.io/LucaPora90/erdb-luca:latest --space || true
+          
+          # Rebuild Space EasyProxy
+          huggingface-cli repo delete easyproxy-space --yes || true
+          huggingface-cli repo create easyproxy-space --space || true
+          huggingface-cli repo push ./EasyProxy ghcr.io/LucaPora90/EasyProxy:latest --space || true
 
-      - name: Factory rebuild EasyProxy Space
-        if: steps.check_easy.outputs.updates != '0'
-        run: |
-          echo "Updates in EasyProxy detected! Triggering factory rebuild..."
-          curl -X POST \
-            -H "Authorization: Bearer $HF_TOKEN" \
-            https://huggingface.co/api/spaces/rebuild/LucaPora90/EasyProxy
+          echo "Factory rebuild completato."
