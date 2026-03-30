@@ -2,11 +2,12 @@ name: Sync Forks & Factory Rebuild
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'  # Ogni giorno alle 2 di notte
+    - cron: '0 2 * * *'
 
 jobs:
   sync-and-rebuild:
@@ -27,11 +28,9 @@ jobs:
           git push origin main
 
       - name: Trigger ERDB Space rebuild
-        uses: hugoalh/hf-space-action@v1
-        with:
-          space: LucaPora90/erdb-luca
-          token: ${{ secrets.HF_TOKEN }}
-          rebuild: true
+        run: |
+          curl -X POST "https://huggingface.co/api/spaces/LucaPora90/erdb-luca/builds" \
+            -H "Authorization: Bearer $HF_TOKEN"
 
       - name: Checkout EasyProxy
         uses: actions/checkout@v4
@@ -48,8 +47,6 @@ jobs:
           git push origin main
 
       - name: Trigger EasyProxy Space rebuild
-        uses: hugoalh/hf-space-action@v1
-        with:
-          space: LucaPora90/EasyProxy
-          token: ${{ secrets.HF_TOKEN }}
-          rebuild: true
+        run: |
+          curl -X POST "https://huggingface.co/api/spaces/LucaPora90/EasyProxy/builds" \
+            -H "Authorization: Bearer $HF_TOKEN"
