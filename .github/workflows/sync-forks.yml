@@ -1,63 +1,43 @@
-name: Sync Fork & Ghost Rebuild Spaces
+name: Sync Fork & Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *' # ogni ora
-  workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    - cron: '0 * * * *'   # ogni ora
+  workflow_dispatch:       # possibilità di trigger manuale
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
+    env:
+      FORK_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
+      HF_API_TOKEN: ${{ secrets.HF_TOKEN }}
+
     steps:
-      # Checkout repo principale
-      - name: Checkout main repo
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN }}
 
-      # Aggiorna fork erdb-luca
-      - name: Sync Fork erdb-luca
-        id: sync-erdb
+      - name: Sync erdb-luca fork
         run: |
           git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
           git fetch upstream
+          git checkout main
           git merge upstream/main || echo "No updates"
           git push origin main || echo "Nothing to push"
-          echo "updated=true" >> $GITHUB_OUTPUT
 
-      # Aggiorna fork EasyProxy
-      - name: Sync Fork EasyProxy
-        id: sync-proxy
+      - name: Sync EasyProxy fork
         run: |
-          git clone https://github.com/LucaPora90/EasyProxy.git temp
-          cd temp
           git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
           git fetch upstream
+          git checkout main
           git merge upstream/main || echo "No updates"
           git push origin main || echo "Nothing to push"
-          echo "updated=true" >> $GITHUB_OUTPUT
-          cd ..
-          rm -rf temp
 
-      # Rebuild ERDB Space (ghost, layer cache)
-      - name: Ghost Rebuild ERDB Space
-        if: steps.sync-erdb.outputs.updated == 'true'
-        uses: huggingface/spaces-action@v0
-        with:
-          space: 'LucaPora90/erdb-luca'
-          token: ${{ secrets.HF_API_TOKEN }}
-          rebuild: true
-          ghost-mode: true   # layer precompilati, build ~10s
-
-      # Rebuild EasyProxy Space (ghost, layer cache)
-      - name: Ghost Rebuild EasyProxy Space
-        if: steps.sync-proxy.outputs.updated == 'true'
-        uses: huggingface/spaces-action@v0
-        with:
-          space: 'LucaPora90/EasyProxy'
-          token: ${{ secrets.HF_API_TOKEN }}
-          rebuild: true
-          ghost-mode: true   # layer precompilati, build ~10s
+      - name: Trigger HF Spaces rebuild if updates
+        if: steps.sync-erdb-luca.outputs.updated == 'true' || steps.sync-easyproxy.outputs.updated == 'true'
+        run: |
+          echo "Triggering factory rebuild on Hugging Face Spaces..."
+          # Comando ufficiale HF CLI per rebuild
+          hf space rebuild --name LucaPora90/erdb-luca
+          hf space rebuild --name LucaPora90/EasyProxy
