@@ -1,58 +1,66 @@
-name: Sync Fork & Rebuild Spaces
+name: Sync Forks & Factory Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *'  # ogni ora
-  workflow_dispatch:  # permette di eseguire manualmente
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    # Ogni ora
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   sync-and-rebuild:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Checkout fork
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Add upstream and fetch
-        run: |
-          git remote add upstream https://github.com/realbestia1/erdb.git || true
-          git fetch upstream
-          
-      - name: Check for updates
+      # Checkout workflow repo
+      - name: Checkout workflow
+        uses: actions/checkout@v4
+
+      # Sync ERDB fork
+      - name: Sync erdb-luca fork
+        uses: wei/git-sync@v3
+        with:
+          repo: https://github.com/LucaPora90/erdb-luca.git
+          branch: main
+          upstream: https://github.com/realbestia1/erdb.git
+          token: ${{ secrets.GITHUB_TOKEN }}
+        id: erdb_sync
+
+      # Sync EasyProxy fork
+      - name: Sync EasyProxy fork
+        uses: wei/git-sync@v3
+        with:
+          repo: https://github.com/LucaPora90/EasyProxy.git
+          branch: main
+          upstream: https://github.com/LucaPora90/EasyProxy.git
+          token: ${{ secrets.GITHUB_TOKEN }}
+        id: easyproxy_sync
+
+      # Determine if any updates were pulled
+      - name: Check if updates exist
         id: check_update
         run: |
-          UPSTREAM_SHA=$(git rev-parse upstream/main)
-          LOCAL_SHA=$(git rev-parse HEAD)
-          echo "upstream=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
-          echo "local=$LOCAL_SHA" >> $GITHUB_OUTPUT
-          if [ "$UPSTREAM_SHA" != "$LOCAL_SHA" ]; then
+          if [[ "${{ steps.erdb_sync.outputs.updates }}" == "true" ]] || [[ "${{ steps.easyproxy_sync.outputs.updates }}" == "true" ]]; then
             echo "updates=true" >> $GITHUB_OUTPUT
           else
             echo "updates=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Sync fork if updates
-        if: steps.check_update.outputs.updates == 'true'
-        run: |
-          git merge upstream/main -m "Sync fork with upstream"
-          git push
-
+      # Trigger ERDB Space rebuild
       - name: Trigger ERDB Space factory rebuild
         if: steps.check_update.outputs.updates == 'true'
-        uses: huggingface/hf-space-action@v2
+        uses: huggingface/spaces-action@v2
         with:
           space-id: LucaPora90/erdb-luca
           repo-type: space
           token: ${{ secrets.HF_TOKEN }}
           rebuild: true
 
+      # Trigger EasyProxy Space rebuild
       - name: Trigger EasyProxy Space factory rebuild
         if: steps.check_update.outputs.updates == 'true'
-        uses: huggingface/hf-space-action@v2
+        uses: huggingface/spaces-action@v2
         with:
           space-id: LucaPora90/EasyProxy
           repo-type: space
