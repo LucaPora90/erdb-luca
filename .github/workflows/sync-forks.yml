@@ -2,8 +2,12 @@ name: Sync Fork & Rebuild Spaces
 
 on:
   schedule:
-    - cron: '0 * * * *'  # ogni ora
+    - cron: '0 * * * *'
   workflow_dispatch:
+
+concurrency:
+  group: sync-hf-spaces
+  cancel-in-progress: true
 
 jobs:
   sync-and-rebuild:
@@ -15,88 +19,117 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.FORK_SYNC_TOKEN }}
+          fetch-depth: 0
 
       - name: Cache Node modules
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          restore-keys: ${{ runner.os }}-node-
 
       - name: Cache Python packages
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
+      # -----------------------
+      # SYNC ERDB
+      # -----------------------
       - name: Sync erdb-luca fork
         id: sync-erdb
         run: |
-          git remote add upstream https://github.com/LucaPora90/erdb-luca.git || true
-          git fetch upstream
-          git checkout main
+          set -e
 
-          if git diff --quiet HEAD..upstream/main; then
-            echo "No updates"
+          git remote add upstream https://github.com/LucaPora90/erdb-luca.git 2>/dev/null || true
+          git fetch upstream
+
+          LOCAL=$(git rev-parse HEAD)
+          REMOTE=$(git rev-parse upstream/main)
+
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "No updates (erdb)"
             echo "updated=false" >> $GITHUB_OUTPUT
           else
-            git merge upstream/main
+            git merge upstream/main --no-edit
             git push origin main
             echo "updated=true" >> $GITHUB_OUTPUT
           fi
 
+      # -----------------------
+      # SYNC PROXY
+      # -----------------------
       - name: Sync EasyProxy fork
         id: sync-proxy
         run: |
-          git remote add upstream https://github.com/LucaPora90/EasyProxy.git || true
-          git fetch upstream
-          git checkout main
+          set -e
 
-          if git diff --quiet HEAD..upstream/main; then
-            echo "No updates"
+          git remote add upstream https://github.com/LucaPora90/EasyProxy.git 2>/dev/null || true
+          git fetch upstream
+
+          LOCAL=$(git rev-parse HEAD)
+          REMOTE=$(git rev-parse upstream/main)
+
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "No updates (proxy)"
             echo "updated=false" >> $GITHUB_OUTPUT
           else
-            git merge upstream/main
+            git merge upstream/main --no-edit
             git push origin main
             echo "updated=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install HF CLI
+      # -----------------------
+      # DEPLOY ERDB SPACE
+      # -----------------------
+      - name: Deploy erdb Space
+        if: steps.sync-erdb.outputs.updated == 'true'
         run: |
-          pip install --upgrade huggingface_hub
+          set -e
 
-      - name: Trigger HF Space rebuild in parallel
+          echo "Deploying erdb Space..."
+
+          rm -rf erdb-space
+          git clone https://user:${HF_API_TOKEN}@huggingface.co/spaces/LucaPora90/erdb-luca erdb-space
+
+          rsync -a --delete --exclude ".git" ./ erdb-space/
+
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > erdb-space/build_info.txt
+
+          cd erdb-space
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          git add -A
+          git commit -m "Auto sync erdb $(date +%s)" || echo "No changes"
+          git push
+
+      # -----------------------
+      # DEPLOY PROXY SPACE
+      # -----------------------
+      - name: Deploy EasyProxy Space
+        if: steps.sync-proxy.outputs.updated == 'true'
         run: |
-          echo "Checking which Spaces need rebuild..."
+          set -e
 
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
+          echo "Deploying EasyProxy Space..."
 
-          if [[ "${{ steps.sync-erdb.outputs.updated }}" == "true" ]]; then
-            echo "erdb-luca updated -> triggering rebuild via commit"
-            git remote add hf-erdb https://user:${HF_API_TOKEN}@huggingface.co/spaces/LucaPora90/erdb-luca || true
+          rm -rf proxy-space
+          git clone https://user:${HF_API_TOKEN}@huggingface.co/spaces/LucaPora90/EasyProxy proxy-space
 
-            echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > build_info_erdb.txt
-            git add build_info_erdb.txt
-            git commit -m "Trigger rebuild erdb $(date +%s)" || echo "No commit"
-            git push hf-erdb main --force &
-          fi
+          rsync -a --delete --exclude ".git" ./ proxy-space/
 
-          if [[ "${{ steps.sync-proxy.outputs.updated }}" == "true" ]]; then
-            echo "EasyProxy updated -> triggering rebuild via commit"
-            git remote add hf-proxy https://user:${HF_API_TOKEN}@huggingface.co/spaces/LucaPora90/EasyProxy || true
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > proxy-space/build_info.txt
 
-            echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > build_info_proxy.txt
-            git add build_info_proxy.txt
-            git commit -m "Trigger rebuild proxy $(date +%s)" || echo "No commit"
-            git push hf-proxy main --force &
-          fi
+          cd proxy-space
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
 
-          wait
-          echo "Rebuilds completed"
+          git add -A
+          git commit -m "Auto sync proxy $(date +%s)" || echo "No changes"
+          git push
